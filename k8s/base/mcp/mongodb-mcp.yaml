@@ -35,7 +35,7 @@ spec:
       - envFrom:
         - configMapRef:
             name: banking-tracing-demo-config
-        image: image-registry.openshift-image-registry.svc:5000/mlflow-tracing-demo/mongodb-mcp:latest
+        image: image-registry.openshift-image-registry.svc:5000/mlflow-tracing-demo/mongodb-mcpatest:latest
         imagePullPolicy: Always
         name: mcp
         ports:

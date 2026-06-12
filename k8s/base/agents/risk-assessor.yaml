@@ -36,7 +36,7 @@ spec:
       - envFrom:
         - configMapRef:
             name: banking-tracing-demo-config
-        image: image-registry.openshift-image-registry.svc:5000/mlflow-tracing-demo/risk-assessor:latest
+        image: image-registry.openshift-image-registry.svc:5000/mlflow-tracing-demo/risk-assessoratest:latest
         imagePullPolicy: Always
         name: agent
         ports:

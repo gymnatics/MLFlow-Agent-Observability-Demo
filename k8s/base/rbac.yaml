@@ -13,7 +13,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mlflow-integration
+  name: mlflow-operator-mlflow-integration
 subjects:
   - kind: ServiceAccount
     name: tracing-demo-agent

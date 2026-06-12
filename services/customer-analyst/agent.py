@@ -118,7 +118,7 @@ class CustomerAnalystAgent:
         async with Client(f"{MONGODB_MCP_URL}/mcp") as mcp_client:
             result = await mcp_client.call_tool(tool_name, arguments)
 
-        if result.structuredContent is not None:
+        if hasattr(result, "structuredContent") and result.structuredContent is not None:
             return result.structuredContent
 
         if result.content:
