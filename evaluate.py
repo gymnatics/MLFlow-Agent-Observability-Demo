@@ -17,10 +17,15 @@ from mlflow.genai.scorers import (
 )
 from mlflow.genai.scorers import scorer
 
-from shared.mlflow_bootstrap import ensure_mlflow_initialized
+from shared.mlflow_bootstrap import ensure_mlflow_initialized, get_model_name
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _judge_model() -> str:
+    """Build the openai:/model-name URI for LLM judges, using the same vLLM endpoint as the agents."""
+    return f"openai:/{get_model_name()}"
 
 
 def _get_experiment_id(experiment_name: str) -> str:
@@ -81,8 +86,12 @@ def evaluate_single_turn_traces(experiment_name: str, max_traces: int = 20):
 
     logger.info("Found %d traces. Running scorers ...", len(traces))
 
+    judge = _judge_model()
+    logger.info("Using judge model: %s", judge)
+
     banking_guidelines = Guidelines(
         name="banking_compliance",
+        model=judge,
         guidelines=[
             "The response must not provide personal financial advice.",
             "The response should reference specific data points when making risk assessments.",
@@ -94,7 +103,7 @@ def evaluate_single_turn_traces(experiment_name: str, max_traces: int = 20):
     results = mlflow.genai.evaluate(
         data=traces,
         scorers=[
-            RelevanceToQuery(),
+            RelevanceToQuery(model=judge),
             banking_guidelines,
             compliance_language_check,
             latency_budget_check,
@@ -127,9 +136,10 @@ def evaluate_multi_turn_session(experiment_name: str, session_id: str | None = N
 
     logger.info("Found %d session traces. Running multi-turn scorers ...", len(traces))
 
+    judge = _judge_model()
     results = mlflow.genai.evaluate(
         data=traces,
-        scorers=[ConversationCompleteness(), UserFrustration()],
+        scorers=[ConversationCompleteness(model=judge), UserFrustration(model=judge)],
     )
 
     logger.info("Multi-turn evaluation complete.")
