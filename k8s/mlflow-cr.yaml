@@ -1,0 +1,53 @@
+# MLflow Custom Resource for RHOAI 3.4
+#
+# This is cluster-scoped and must be named "mlflow".
+# The RHOAI operator creates it in the redhat-ods-applications namespace.
+#
+# Prerequisites:
+#   1. Enable the MLflow Operator component:
+#      oc patch datasciencecluster default-dsc \
+#        --type=merge \
+#        -p '{"spec":{"components":{"mlflowoperator":{"managementState":"Managed"}}}}'
+#
+#   2. Apply this CR:
+#      oc apply -f mlflow-cr.yaml
+#
+# For production, use PostgreSQL + S3 instead of SQLite + PVC.
+# See: Red_Hat_OpenShift_AI_Self-Managed-3.4-Working_with_Mlflow-en-US.pdf
+
+---
+# Development / Demo deployment (SQLite + PVC)
+apiVersion: mlflow.opendatahub.io/v1
+kind: MLflow
+metadata:
+  name: mlflow
+  namespace: redhat-ods-applications
+spec:
+  storage:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+  backendStoreUri: "sqlite:////mlflow/mlflow.db"
+  artifactsDestination: "file:///mlflow/artifacts"
+  serveArtifacts: true
+
+# ---
+# Production deployment (PostgreSQL + S3) -- uncomment and configure
+#
+# apiVersion: mlflow.opendatahub.io/v1
+# kind: MLflow
+# metadata:
+#   name: mlflow
+#   namespace: redhat-ods-applications
+# spec:
+#   replicas: 2
+#   backendStoreUriFrom:
+#     name: mlflow-db-credentials
+#     key: backend-store-uri
+#   artifactsDestination: "s3://my-mlflow-bucket/artifacts"
+#   serveArtifacts: true
+#   envFrom:
+#     - secretRef:
+#         name: mlflow-s3-credentials

@@ -1,0 +1,77 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: compliance-reviewer
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: banking-tracing-demo
+    app.openshift.io/runtime: python
+    component: agent
+    kagenti.io/type: agent
+    kagenti.io/framework: Python
+    protocol.kagenti.io/a2a: ''
+  name: compliance-reviewer
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: compliance-reviewer
+  template:
+    metadata:
+      labels:
+        app: compliance-reviewer
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/part-of: banking-tracing-demo
+        app.openshift.io/runtime: python
+        component: agent
+        kagenti.io/type: agent
+        kagenti.io/framework: Python
+        protocol.kagenti.io/a2a: ''
+    spec:
+      serviceAccountName: tracing-demo-agent
+      containers:
+      - envFrom:
+        - configMapRef:
+            name: banking-tracing-demo-config
+        image: image-registry.openshift-image-registry.svc:5000/mlflow-tracing-demo/compliance-reviewer:latest
+        imagePullPolicy: Always
+        name: agent
+        ports:
+        - containerPort: 8003
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8003
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8003
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: compliance-reviewer
+spec:
+  ports:
+  - name: a2a
+    port: 8080
+    targetPort: 8003
+  - name: original
+    port: 8003
+    targetPort: 8003
+  selector:
+    app: compliance-reviewer

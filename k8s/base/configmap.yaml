@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banking-tracing-demo-config
+data:
+  MLFLOW_TRACKING_URI: "https://rh-ai.apps.cluster-9tjvr.9tjvr.sandbox2001.opentlc.com/mlflow"
+  MLFLOW_TRACKING_AUTH: "kubernetes-namespaced"
+  MLFLOW_TRACKING_INSECURE_TLS: "true"
+  MLFLOW_EXPERIMENT_NAME: "tracing-demo"
+
+  # Qwen3-8B-FP8 via vLLM (tool-calling enabled)
+  OPENAI_BASE_URL: "https://qwen3-8b-fp8-dynamic-no-maas-0-test.apps.cluster-9tjvr.9tjvr.sandbox2001.opentlc.com/v1"
+  OPENAI_API_KEY: "EMPTY"
+  LLM_MODEL: "qwen3-8b-fp8-dynamic-no-maas"
+
+  # MongoDB
+  MONGODB_URI: "mongodb://mongodb:27017"
+  MONGODB_DATABASE: "banking_crm"
+
+  # MCP server -- propagation_only suppresses FastMCP's own OTel spans
+  # so @mlflow.trace is the sole span source (no duplicates)
+  MONGODB_MCP_URL: "http://mongodb-mcp:8090"
+  FASTMCP_TELEMETRY_MODE: "propagation_only"
+
+  # A2A agent service URLs
+  CUSTOMER_ANALYST_URL: "http://customer-analyst:8001"
+  RISK_ASSESSOR_URL: "http://risk-assessor:8002"
+  COMPLIANCE_REVIEWER_URL: "http://compliance-reviewer:8003"
+
+  USE_MOCK: "0"

@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '["mongodb"]'
+  labels:
+    app: mongodb-mcp
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: banking-tracing-demo
+    app.openshift.io/runtime: python
+    component: mcp
+    kagenti.io/type: tool
+    protocol.kagenti.io/mcp: ''
+  name: mongodb-mcp
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb-mcp
+  template:
+    metadata:
+      labels:
+        app: mongodb-mcp
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/part-of: banking-tracing-demo
+        app.openshift.io/runtime: python
+        component: mcp
+        kagenti.io/type: tool
+        protocol.kagenti.io/mcp: ''
+    spec:
+      serviceAccountName: tracing-demo-agent
+      containers:
+      - envFrom:
+        - configMapRef:
+            name: banking-tracing-demo-config
+        image: image-registry.openshift-image-registry.svc:5000/mlflow-tracing-demo/mongodb-mcp:latest
+        imagePullPolicy: Always
+        name: mcp
+        ports:
+        - containerPort: 8090
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-mcp
+spec:
+  ports:
+  - port: 8090
+    targetPort: 8090
+  selector:
+    app: mongodb-mcp
