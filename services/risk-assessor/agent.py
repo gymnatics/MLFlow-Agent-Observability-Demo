@@ -61,17 +61,11 @@ class RiskAssessorAgent:
             ],
             temperature=0.2,
             max_tokens=1024,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
 
         content = response.choices[0].message.content or ""
-        content = _strip_thinking(content)
         try:
             return json.loads(content)
         except json.JSONDecodeError:
             return {"raw_assessment": content, "risk_level": "unknown"}
-
-
-def _strip_thinking(text: str) -> str:
-    """Remove <think>...</think> tags from Qwen3 model output."""
-    import re
-    return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
