@@ -1,0 +1,85 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: banking-dashboard
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: banking-tracing-demo
+    app.openshift.io/runtime: python
+  name: banking-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banking-dashboard
+  template:
+    metadata:
+      labels:
+        app: banking-dashboard
+        app.kubernetes.io/component: frontend
+        app.kubernetes.io/part-of: banking-tracing-demo
+        app.openshift.io/runtime: python
+    spec:
+      serviceAccountName: tracing-demo-agent
+      containers:
+      - envFrom:
+        - configMapRef:
+            name: banking-tracing-demo-config
+        env:
+        - name: ORCHESTRATOR_URL
+          value: "http://orchestrator:8000"
+        - name: MLFLOW_UI_URL
+          value: "https://rh-ai.apps.cluster-9tjvr.9tjvr.sandbox2001.opentlc.com/mlflow"
+        image: image-registry.openshift-image-registry.svc:5000/mlflow-tracing-demo/banking-dashboardatest:latest
+        imagePullPolicy: Always
+        name: frontend
+        ports:
+        - containerPort: 8501
+        livenessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 15
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: banking-dashboard
+spec:
+  ports:
+  - port: 8501
+    targetPort: 8501
+  selector:
+    app: banking-dashboard
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: banking-dashboard
+  labels:
+    app: banking-dashboard
+    app.kubernetes.io/part-of: banking-tracing-demo
+spec:
+  to:
+    kind: Service
+    name: banking-dashboard
+  port:
+    targetPort: 8501
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

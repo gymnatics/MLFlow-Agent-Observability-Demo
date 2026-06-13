@@ -6,7 +6,7 @@ data:
   MLFLOW_TRACKING_URI: "https://rh-ai.apps.cluster-9tjvr.9tjvr.sandbox2001.opentlc.com/mlflow"
   MLFLOW_TRACKING_AUTH: "kubernetes-namespaced"
   MLFLOW_TRACKING_INSECURE_TLS: "true"
-  MLFLOW_EXPERIMENT_NAME: "tracing-demo"
+  MLFLOW_EXPERIMENT_NAME: "banking-demo"
 
   # Qwen3-8B-FP8 via vLLM (tool-calling enabled)
   OPENAI_BASE_URL: "https://qwen3-8b-fp8-dynamic-no-maas-0-test.apps.cluster-9tjvr.9tjvr.sandbox2001.opentlc.com/v1"
