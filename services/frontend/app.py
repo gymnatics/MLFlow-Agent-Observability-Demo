@@ -74,61 +74,131 @@ def _judge_base_url() -> str:
 
 
 def run_evaluators():
-    """Run MLflow evaluators on recent traces. Results attach as assessments in MLflow UI."""
+    """Run MLflow evaluators on recent traces -- different scorers for different trace types."""
     exp = mlflow.get_experiment_by_name(os.environ.get("MLFLOW_EXPERIMENT_NAME", "banking-demo"))
     if not exp:
         return None, "Experiment not found"
 
-    traces = mlflow.search_traces(experiment_ids=[exp.experiment_id], max_results=10)
-    if traces.empty:
-        return None, "No traces found"
-
     model_uri = f"openai:/{get_model_name()}"
     base_url = _judge_base_url()
+    results_summary = {}
 
-    relevance_judge = make_judge(
-        name="relevance_to_query",
-        model=model_uri,
-        base_url=base_url,
-        instructions=(
-            "Evaluate whether the agent's response is relevant to the user's query.\n\n"
-            "Query: {{ inputs }}\nResponse: {{ outputs }}\n\n"
-            "Answer 'yes' if relevant, 'no' if not."
-        ),
+    # --- Assessment traces: compliance + risk accuracy ---
+    assessment_traces = mlflow.search_traces(
+        experiment_ids=[exp.experiment_id],
+        filter_string="trace.name = 'orchestrator.assess_customer'",
+        max_results=10,
     )
 
-    compliance_judge = make_judge(
-        name="banking_compliance",
-        model=model_uri,
-        base_url=base_url,
-        instructions=(
-            "Evaluate whether the response adheres to banking guidelines:\n"
-            "1. Must not provide personal financial advice\n"
-            "2. Should reference data points in risk assessments\n"
-            "3. Must be professional\n"
-            "4. Risk levels must be stated as low/medium/high\n\n"
-            "Response: {{ outputs }}\n\nAnswer 'pass' or 'fail' with rationale."
-        ),
+    if not assessment_traces.empty:
+        compliance_judge = make_judge(
+            name="regulatory_compliance",
+            model=model_uri,
+            base_url=base_url,
+            instructions=(
+                "You are a banking regulator. Evaluate whether this risk assessment output "
+                "meets regulatory standards:\n"
+                "1. Risk level must be clearly stated (low/medium/high)\n"
+                "2. Debt-to-income ratio must be calculated and reported\n"
+                "3. KYC and AML checks must be performed\n"
+                "4. Recommendation must be justified with data\n\n"
+                "Assessment output: {{ outputs }}\n\n"
+                "Answer 'pass' or 'fail' with specific rationale."
+            ),
+        )
+
+        risk_accuracy_judge = make_judge(
+            name="risk_data_grounding",
+            model=model_uri,
+            base_url=base_url,
+            instructions=(
+                "Evaluate whether the risk assessment is grounded in the actual customer data "
+                "(not hallucinated). Check if the risk score, DTI ratio, and key factors "
+                "are consistent with the input customer profile.\n\n"
+                "Input data: {{ inputs }}\nAssessment output: {{ outputs }}\n\n"
+                "Answer 'grounded' if based on real data, 'hallucinated' if it invents facts."
+            ),
+        )
+
+        @scorer
+        def assessment_latency(inputs, outputs, trace):
+            from mlflow.entities import Feedback
+            if trace and trace.info and trace.info.execution_time_ms is not None:
+                ok = trace.info.execution_time_ms < 30_000
+                return Feedback(
+                    name="assessment_sla",
+                    value="pass" if ok else "fail",
+                    rationale=f"Assessment took {trace.info.execution_time_ms}ms ({'within' if ok else 'exceeds'} 30s SLA).",
+                )
+            return Feedback(name="assessment_sla", value="unknown", rationale="No timing data.")
+
+        eval_result = mlflow.genai.evaluate(
+            data=assessment_traces,
+            scorers=[compliance_judge, risk_accuracy_judge, assessment_latency],
+        )
+        results_summary["assessments"] = {
+            "count": len(assessment_traces),
+            "metrics": eval_result.metrics,
+        }
+
+    # --- Chat traces: helpfulness + answer quality ---
+    chat_traces = mlflow.search_traces(
+        experiment_ids=[exp.experiment_id],
+        filter_string="trace.name = 'orchestrator.chat'",
+        max_results=10,
     )
 
-    @scorer
-    def latency_check(inputs, outputs, trace):
-        from mlflow.entities import Feedback
-        if trace and trace.info and trace.info.execution_time_ms is not None:
-            ok = trace.info.execution_time_ms < 30_000
-            return Feedback(
-                name="latency_sla",
-                value="pass" if ok else "fail",
-                rationale=f"Took {trace.info.execution_time_ms}ms ({'within' if ok else 'exceeds'} 30s SLA).",
-            )
-        return Feedback(name="latency_sla", value="unknown", rationale="No timing data.")
+    if not chat_traces.empty:
+        helpfulness_judge = make_judge(
+            name="helpfulness",
+            model=model_uri,
+            base_url=base_url,
+            instructions=(
+                "Evaluate whether the banking assistant's response is helpful to the user.\n"
+                "A helpful response: answers the question directly, is clear and concise, "
+                "provides actionable information when appropriate.\n\n"
+                "User query: {{ inputs }}\nAssistant response: {{ outputs }}\n\n"
+                "Answer 'helpful' or 'unhelpful' with rationale."
+            ),
+        )
 
-    results = mlflow.genai.evaluate(
-        data=traces,
-        scorers=[relevance_judge, compliance_judge, latency_check],
-    )
+        factuality_judge = make_judge(
+            name="factual_accuracy",
+            model=model_uri,
+            base_url=base_url,
+            instructions=(
+                "Evaluate whether the banking assistant's response contains accurate information "
+                "or if it hallucinated facts not present in the context.\n\n"
+                "Response: {{ outputs }}\n\n"
+                "Answer 'accurate' if statements are reasonable, 'inaccurate' if it invents specific numbers or facts."
+            ),
+        )
 
-    return results, None
+        @scorer
+        def chat_latency(inputs, outputs, trace):
+            from mlflow.entities import Feedback
+            if trace and trace.info and trace.info.execution_time_ms is not None:
+                ok = trace.info.execution_time_ms < 15_000
+                return Feedback(
+                    name="chat_sla",
+                    value="pass" if ok else "fail",
+                    rationale=f"Chat response took {trace.info.execution_time_ms}ms ({'within' if ok else 'exceeds'} 15s SLA).",
+                )
+            return Feedback(name="chat_sla", value="unknown", rationale="No timing data.")
+
+        eval_result = mlflow.genai.evaluate(
+            data=chat_traces,
+            scorers=[helpfulness_judge, factuality_judge, chat_latency],
+        )
+        results_summary["chat"] = {
+            "count": len(chat_traces),
+            "metrics": eval_result.metrics,
+        }
+
+    if not results_summary:
+        return None, "No assessment or chat traces found"
+
+    return results_summary, None
 
 
 # ---------------------------------------------------------------------------
@@ -297,13 +367,24 @@ with right_col:
         st.markdown("---")
         st.markdown("#### Evaluation Results (LLM Judges)")
         st.caption("Assessments attached to traces in MLflow UI → Show assessments")
-        metrics = st.session_state["eval_results"].metrics
-        if metrics:
+
+        results_summary = st.session_state["eval_results"]
+
+        if "assessments" in results_summary:
+            st.markdown(f"**Assessment Traces** ({results_summary['assessments']['count']} traces)")
+            st.caption("Scorers: regulatory_compliance, risk_data_grounding, assessment_sla")
+            metrics = results_summary["assessments"].get("metrics", {})
             for k, v in metrics.items():
-                st.markdown(f"- **{k}**: {v}")
-        else:
-            st.markdown("Scorers ran but no aggregate metrics returned. Check individual trace assessments in MLflow.")
-        st.markdown(f"[View evaluation run in MLflow]({MLFLOW_UI_URL}/#/experiments)")
+                st.markdown(f"- {k}: `{v}`")
+
+        if "chat" in results_summary:
+            st.markdown(f"**Chat Traces** ({results_summary['chat']['count']} traces)")
+            st.caption("Scorers: helpfulness, factual_accuracy, chat_sla")
+            metrics = results_summary["chat"].get("metrics", {})
+            for k, v in metrics.items():
+                st.markdown(f"- {k}: `{v}`")
+
+        st.markdown(f"[View in MLflow UI]({MLFLOW_UI_URL}/#/experiments)")
 
 
 # ---------------------------------------------------------------------------

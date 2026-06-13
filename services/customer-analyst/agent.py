@@ -112,11 +112,16 @@ class CustomerAnalystAgent:
         no manual header injection needed. The FastMCP client reads the active
         OTel span (created by @mlflow.trace above) and injects traceparent
         into the MCP request's _meta.
+
+        suppress_fastmcp_telemetry() prevents noisy tools/list spans during
+        client initialization while preserving context propagation on call_tool.
         """
         from fastmcp import Client
+        from fastmcp.telemetry import suppress_fastmcp_telemetry
 
-        async with Client(f"{MONGODB_MCP_URL}/mcp") as mcp_client:
-            result = await mcp_client.call_tool(tool_name, arguments)
+        with suppress_fastmcp_telemetry():
+            async with Client(f"{MONGODB_MCP_URL}/mcp") as mcp_client:
+                result = await mcp_client.call_tool(tool_name, arguments)
 
         if hasattr(result, "structuredContent") and result.structuredContent is not None:
             return result.structuredContent
