@@ -89,7 +89,10 @@ def ensure_mlflow_initialized() -> None:
             except Exception as bridge_exc:
                 logger.warning("[mlflow_bootstrap] OTel bridge setup failed: %s", bridge_exc)
 
-        mlflow.openai.autolog()
+        try:
+            mlflow.openai.autolog()
+        except Exception:
+            pass
 
         try:
             import langchain  # noqa: F401
