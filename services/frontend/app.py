@@ -419,6 +419,12 @@ if st.session_state["chat_open"]:
 
     if prompt := st.chat_input("Ask a banking question...", key="chat_input"):
         st.session_state["chat_messages"].append({"role": "user", "content": prompt})
+        st.session_state["chat_pending"] = True
+        st.rerun()
+
+    if st.session_state.get("chat_pending"):
+        st.session_state["chat_pending"] = False
+        last_user_msg = st.session_state["chat_messages"][-1]["content"]
 
         context_parts = []
         if "assessment_result" in st.session_state:
@@ -433,17 +439,20 @@ if st.session_state["chat_open"]:
                 f"Customer: {json.dumps(r.get('customer_data', {}).get('profile', {}), default=str)[:300]}"
             )
 
-        query = f"{prompt}\n\n{''.join(context_parts)}" if context_parts else prompt
+        query = f"{last_user_msg}\n\n{''.join(context_parts)}" if context_parts else last_user_msg
 
-        chat_result = call_orchestrator("chat", {
-            "query": query,
-            "session_id": st.session_state["chat_session_id"],
-            "skill": "chat",
-        })
-        response = chat_result.get("response", chat_result.get("content", str(chat_result)))
-        response = strip_thinking(response)
-        st.session_state["chat_messages"].append({"role": "assistant", "content": response})
-        st.rerun()
+        with chat_container:
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    chat_result = call_orchestrator("chat", {
+                        "query": query,
+                        "session_id": st.session_state["chat_session_id"],
+                        "skill": "chat",
+                    })
+                    response = chat_result.get("response", chat_result.get("content", str(chat_result)))
+                    response = strip_thinking(response)
+                    st.session_state["chat_messages"].append({"role": "assistant", "content": response})
+                    st.rerun()
 
     col_clear, _ = st.columns([1, 4])
     with col_clear:
