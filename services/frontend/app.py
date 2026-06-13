@@ -7,11 +7,11 @@ for every interaction.
 import asyncio
 import json
 import os
+import re
 import sys
 import uuid
 
 import streamlit as st
-import httpx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from shared.mlflow_bootstrap import ensure_mlflow_initialized, traced_a2a_call
@@ -40,22 +40,11 @@ st.markdown("""
     .risk-low { color: #28a745; font-weight: bold; }
     .risk-medium { color: #ffc107; font-weight: bold; }
     .risk-high { color: #dc3545; font-weight: bold; }
-    .metric-card {
-        background: #1e1e2e;
-        border-radius: 8px;
-        padding: 16px;
-        margin: 8px 0;
-        border-left: 4px solid #6c63ff;
-    }
-    .check-pass { color: #28a745; }
-    .check-fail { color: #dc3545; }
-    .check-warning { color: #ffc107; }
 </style>
 """, unsafe_allow_html=True)
 
 
 def run_async(coro):
-    """Run async function from sync Streamlit context."""
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)
@@ -64,11 +53,78 @@ def run_async(coro):
 
 
 def call_orchestrator(skill: str, params: dict) -> dict:
-    """Call the orchestrator via A2A."""
     return run_async(traced_a2a_call(ORCHESTRATOR_URL, skill, params))
 
 
-# --- Header ---
+def strip_thinking(text: str) -> str:
+    """Remove <think>...</think> tags from Qwen3 model output."""
+    if "<think>" in text:
+        text = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Sidebar: Banking Assistant Chat
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.header("Banking Assistant")
+    st.caption("Ask questions about the customer or assessment results")
+
+    if "chat_session_id" not in st.session_state:
+        st.session_state["chat_session_id"] = f"chat-{uuid.uuid4().hex[:8]}"
+    if "chat_messages" not in st.session_state:
+        st.session_state["chat_messages"] = []
+
+    for msg in st.session_state["chat_messages"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    if prompt := st.chat_input("Ask a banking question..."):
+        st.session_state["chat_messages"].append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                context_parts = []
+                if "assessment_result" in st.session_state:
+                    result = st.session_state["assessment_result"]
+                    cid = st.session_state.get("assessment_customer", "")
+                    context_parts.append(
+                        f"Context: The latest assessment for customer {cid} returned: "
+                        f"Risk level={result.get('risk_assessment', {}).get('risk_level', 'N/A')}, "
+                        f"Risk score={result.get('risk_assessment', {}).get('risk_score', 'N/A')}, "
+                        f"Compliant={result.get('compliance_review', {}).get('compliant', 'N/A')}, "
+                        f"Compliance score={result.get('compliance_review', {}).get('compliance_score', 'N/A')}. "
+                        f"Customer data: {json.dumps(result.get('customer_data', {}), default=str)[:500]}"
+                    )
+
+                query = prompt
+                if context_parts:
+                    query = f"{prompt}\n\n{''.join(context_parts)}"
+
+                chat_result = call_orchestrator("chat", {
+                    "query": query,
+                    "session_id": st.session_state["chat_session_id"],
+                    "skill": "chat",
+                })
+                response = chat_result.get("response", chat_result.get("content", str(chat_result)))
+                response = strip_thinking(response)
+
+                st.markdown(response)
+                st.session_state["chat_messages"].append({"role": "assistant", "content": response})
+
+    if st.button("Clear Chat", use_container_width=True):
+        st.session_state["chat_messages"] = []
+        st.session_state["chat_session_id"] = f"chat-{uuid.uuid4().hex[:8]}"
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Main: Header
+# ---------------------------------------------------------------------------
+
 col_title, col_link = st.columns([4, 1])
 with col_title:
     st.title("Banking Operations Dashboard")
@@ -77,7 +133,10 @@ with col_link:
 
 st.divider()
 
-# --- Sidebar: Customer Selection ---
+# ---------------------------------------------------------------------------
+# Main: Customer Selection + Assessment
+# ---------------------------------------------------------------------------
+
 left_col, right_col = st.columns([1, 2])
 
 with left_col:
@@ -107,8 +166,8 @@ with left_col:
             result = call_orchestrator("assess_customer", {"customer_id": customer_id})
             st.session_state["assessment_result"] = result
             st.session_state["assessment_customer"] = customer_id
+            st.rerun()
 
-# --- Right Panel: Assessment Results ---
 with right_col:
     st.subheader("Assessment Results")
 
@@ -121,7 +180,6 @@ with right_col:
         else:
             st.success(f"Assessment complete for {assessed_id}")
 
-            # Customer data
             cust_data = result.get("customer_data", {})
             if cust_data and cust_data.get("profile"):
                 profile = cust_data["profile"]
@@ -140,18 +198,33 @@ with right_col:
             if risk:
                 st.markdown("#### Risk Assessment")
                 r_col1, r_col2, r_col3 = st.columns(3)
+
+                level = risk.get("risk_level", risk.get("raw_assessment", "unknown"))
+                if isinstance(level, str) and len(level) > 20:
+                    level = "see details"
+                score = risk.get("risk_score", "N/A")
+                dti = risk.get("debt_to_income_ratio", "N/A")
+
                 with r_col1:
-                    level = risk.get("risk_level", "unknown")
-                    color = {"low": "green", "medium": "orange", "high": "red"}.get(level, "gray")
-                    st.metric("Risk Level", level.upper())
+                    st.metric("Risk Level", str(level).upper() if level else "N/A")
                 with r_col2:
-                    st.metric("Risk Score", f"{risk.get('risk_score', 'N/A')}/100")
+                    st.metric("Risk Score", f"{score}/100")
                 with r_col3:
-                    st.metric("DTI Ratio", f"{risk.get('debt_to_income_ratio', 'N/A')}%")
+                    st.metric("DTI Ratio", f"{dti}%")
+
+                key_factors = risk.get("key_factors", [])
+                if key_factors:
+                    st.markdown("**Key Factors:**")
+                    for f in key_factors[:5]:
+                        st.markdown(f"- {f}")
 
                 rec = risk.get("recommendation", "")
                 if rec:
                     st.info(f"**Recommendation:** {rec}")
+
+                if risk.get("raw_assessment"):
+                    with st.expander("Raw LLM Assessment", expanded=False):
+                        st.text(strip_thinking(risk["raw_assessment"])[:1000])
 
             # Compliance Review
             compliance = result.get("compliance_review", {})
@@ -184,7 +257,10 @@ with right_col:
                 if rec:
                     st.info(f"**Compliance Recommendation:** {rec}")
 
-            # Final response
+                if compliance.get("raw_review"):
+                    with st.expander("Raw LLM Review", expanded=False):
+                        st.text(strip_thinking(compliance["raw_review"])[:1000])
+
             final = result.get("final_response", "")
             if final:
                 st.markdown("---")
@@ -192,38 +268,3 @@ with right_col:
 
     else:
         st.info("Select a customer and click 'Run Full Assessment' to start the pipeline.")
-
-# --- Bottom: Chat ---
-st.divider()
-st.subheader("Banking Assistant Chat")
-
-if "chat_session_id" not in st.session_state:
-    st.session_state["chat_session_id"] = f"chat-{uuid.uuid4().hex[:8]}"
-if "chat_messages" not in st.session_state:
-    st.session_state["chat_messages"] = []
-
-for msg in st.session_state["chat_messages"]:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-if prompt := st.chat_input("Ask a banking question..."):
-    st.session_state["chat_messages"].append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            result = call_orchestrator("chat", {
-                "query": prompt,
-                "session_id": st.session_state["chat_session_id"],
-                "skill": "chat",
-            })
-            response = result.get("response", result.get("content", str(result)))
-
-            # Strip thinking tags if present (Qwen3 outputs <think>...</think>)
-            if "<think>" in response:
-                import re
-                response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
-
-            st.markdown(response)
-            st.session_state["chat_messages"].append({"role": "assistant", "content": response})
