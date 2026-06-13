@@ -8,9 +8,12 @@ import sys
 import uuid
 
 import streamlit as st
+import mlflow
+from mlflow.genai import make_judge
+from mlflow.genai.scorers import scorer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from shared.mlflow_bootstrap import ensure_mlflow_initialized, traced_a2a_call
+from shared.mlflow_bootstrap import ensure_mlflow_initialized, traced_a2a_call, get_model_name
 
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://orchestrator:8000")
 MLFLOW_UI_URL = os.environ.get(
@@ -36,12 +39,6 @@ st.markdown("""
     .risk-low { color: #28a745; font-weight: bold; }
     .risk-medium { color: #ffc107; font-weight: bold; }
     .risk-high { color: #dc3545; font-weight: bold; }
-    .chat-container {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        z-index: 9999;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -62,6 +59,76 @@ def strip_thinking(text: str) -> str:
     if "<think>" in text:
         text = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
     return text
+
+
+def _judge_base_url() -> str:
+    base = os.environ.get(
+        "OPENAI_BASE_URL",
+        "https://qwen3-8b-fp8-dynamic-no-maas-0-test.apps.cluster-9tjvr.9tjvr.sandbox2001.opentlc.com/v1",
+    )
+    if base.endswith("/v1"):
+        return base + "/chat/completions"
+    if base.endswith("/v1/"):
+        return base + "chat/completions"
+    return base
+
+
+def run_evaluators():
+    """Run MLflow evaluators on recent traces. Results attach as assessments in MLflow UI."""
+    exp = mlflow.get_experiment_by_name(os.environ.get("MLFLOW_EXPERIMENT_NAME", "banking-demo"))
+    if not exp:
+        return None, "Experiment not found"
+
+    traces = mlflow.search_traces(experiment_ids=[exp.experiment_id], max_results=10)
+    if traces.empty:
+        return None, "No traces found"
+
+    model_uri = f"openai:/{get_model_name()}"
+    base_url = _judge_base_url()
+
+    relevance_judge = make_judge(
+        name="relevance_to_query",
+        model=model_uri,
+        base_url=base_url,
+        instructions=(
+            "Evaluate whether the agent's response is relevant to the user's query.\n\n"
+            "Query: {{ inputs }}\nResponse: {{ outputs }}\n\n"
+            "Answer 'yes' if relevant, 'no' if not."
+        ),
+    )
+
+    compliance_judge = make_judge(
+        name="banking_compliance",
+        model=model_uri,
+        base_url=base_url,
+        instructions=(
+            "Evaluate whether the response adheres to banking guidelines:\n"
+            "1. Must not provide personal financial advice\n"
+            "2. Should reference data points in risk assessments\n"
+            "3. Must be professional\n"
+            "4. Risk levels must be stated as low/medium/high\n\n"
+            "Response: {{ outputs }}\n\nAnswer 'pass' or 'fail' with rationale."
+        ),
+    )
+
+    @scorer
+    def latency_check(inputs, outputs, trace):
+        from mlflow.entities import Feedback
+        if trace and trace.info and trace.info.execution_time_ms is not None:
+            ok = trace.info.execution_time_ms < 30_000
+            return Feedback(
+                name="latency_sla",
+                value="pass" if ok else "fail",
+                rationale=f"Took {trace.info.execution_time_ms}ms ({'within' if ok else 'exceeds'} 30s SLA).",
+            )
+        return Feedback(name="latency_sla", value="unknown", rationale="No timing data.")
+
+    results = mlflow.genai.evaluate(
+        data=traces,
+        scorers=[relevance_judge, compliance_judge, latency_check],
+    )
+
+    return results, None
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +176,18 @@ with left_col:
             result = call_orchestrator("assess_customer", {"customer_id": customer_id})
             st.session_state["assessment_result"] = result
             st.session_state["assessment_customer"] = customer_id
+            st.rerun()
+
+    st.divider()
+
+    if st.button("Run Evaluators on Traces", use_container_width=True):
+        with st.spinner("Running LLM judges on recent traces (this takes ~20s)..."):
+            eval_results, err = run_evaluators()
+            if err:
+                st.session_state["eval_error"] = err
+            else:
+                st.session_state["eval_results"] = eval_results
+                st.session_state.pop("eval_error", None)
             st.rerun()
 
 with right_col:
@@ -211,9 +290,24 @@ with right_col:
     else:
         st.info("Select a customer and click 'Run Full Assessment' to start the pipeline.")
 
+    # Evaluator results
+    if "eval_error" in st.session_state:
+        st.error(f"Evaluator error: {st.session_state['eval_error']}")
+    elif "eval_results" in st.session_state:
+        st.markdown("---")
+        st.markdown("#### Evaluation Results (LLM Judges)")
+        st.caption("Assessments attached to traces in MLflow UI → Show assessments")
+        metrics = st.session_state["eval_results"].metrics
+        if metrics:
+            for k, v in metrics.items():
+                st.markdown(f"- **{k}**: {v}")
+        else:
+            st.markdown("Scorers ran but no aggregate metrics returned. Check individual trace assessments in MLflow.")
+        st.markdown(f"[View evaluation run in MLflow]({MLFLOW_UI_URL}/#/experiments)")
+
 
 # ---------------------------------------------------------------------------
-# Bottom-right Chat Popup
+# Chat (toggle panel at bottom)
 # ---------------------------------------------------------------------------
 
 st.markdown("---")
@@ -225,8 +319,8 @@ if "chat_messages" not in st.session_state:
 if "chat_open" not in st.session_state:
     st.session_state["chat_open"] = False
 
-chat_col1, chat_col2 = st.columns([5, 1])
-with chat_col2:
+_, chat_toggle_col = st.columns([5, 1])
+with chat_toggle_col:
     if st.button("💬 Chat" if not st.session_state["chat_open"] else "✕ Close", use_container_width=True):
         st.session_state["chat_open"] = not st.session_state["chat_open"]
         st.rerun()
@@ -235,11 +329,14 @@ if st.session_state["chat_open"]:
     st.subheader("Banking Assistant")
     st.caption("Ask questions about the customer or assessment results")
 
-    for msg in st.session_state["chat_messages"]:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    chat_container = st.container(height=400)
 
-    if prompt := st.chat_input("Ask a banking question..."):
+    with chat_container:
+        for msg in st.session_state["chat_messages"]:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+    if prompt := st.chat_input("Ask a banking question...", key="chat_input"):
         st.session_state["chat_messages"].append({"role": "user", "content": prompt})
 
         context_parts = []
@@ -257,17 +354,15 @@ if st.session_state["chat_open"]:
 
         query = f"{prompt}\n\n{''.join(context_parts)}" if context_parts else prompt
 
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                chat_result = call_orchestrator("chat", {
-                    "query": query,
-                    "session_id": st.session_state["chat_session_id"],
-                    "skill": "chat",
-                })
-                response = chat_result.get("response", chat_result.get("content", str(chat_result)))
-                response = strip_thinking(response)
-                st.markdown(response)
-                st.session_state["chat_messages"].append({"role": "assistant", "content": response})
+        chat_result = call_orchestrator("chat", {
+            "query": query,
+            "session_id": st.session_state["chat_session_id"],
+            "skill": "chat",
+        })
+        response = chat_result.get("response", chat_result.get("content", str(chat_result)))
+        response = strip_thinking(response)
+        st.session_state["chat_messages"].append({"role": "assistant", "content": response})
+        st.rerun()
 
     col_clear, _ = st.columns([1, 4])
     with col_clear:
