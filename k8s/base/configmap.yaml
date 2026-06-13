@@ -22,10 +22,6 @@ data:
   MONGODB_MCP_URL: "http://mongodb-mcp:8090"
   FASTMCP_TELEMETRY_MODE: "propagation_only"
 
-  # Suppress A2A SDK auto-tracing (creates noisy transport-level spans)
-  # Our @mlflow.trace decorators + TracingMiddleware handle all tracing
-  OTEL_INSTRUMENTATION_A2A_SDK_ENABLED: "false"
-
   # A2A agent service URLs
   CUSTOMER_ANALYST_URL: "http://customer-analyst:8001"
   RISK_ASSESSOR_URL: "http://risk-assessor:8002"
