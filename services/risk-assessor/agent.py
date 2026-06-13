@@ -60,7 +60,7 @@ class RiskAssessorAgent:
                 {"role": "user", "content": f"Analyze the credit risk for this customer:\n\n{data_str}"},
             ],
             temperature=0.2,
-            max_tokens=1024,
+            max_tokens=2048,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
 

@@ -65,7 +65,7 @@ class ComplianceReviewerAgent:
                 {"role": "user", "content": f"Review the following for regulatory compliance:\n\n{data_str}"},
             ],
             temperature=0.2,
-            max_tokens=1024,
+            max_tokens=2048,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
 
