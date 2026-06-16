@@ -3,28 +3,23 @@ kind: ConfigMap
 metadata:
   name: banking-tracing-demo-config
 data:
-  MLFLOW_TRACKING_URI: "https://rh-ai.apps.cluster-9tjvr.9tjvr.sandbox2001.opentlc.com/mlflow"
+  MLFLOW_TRACKING_URI: "https://rh-ai.apps.ocp.4dgzz.sandbox3174.opentlc.com/mlflow"
   MLFLOW_TRACKING_AUTH: "kubernetes-namespaced"
   MLFLOW_TRACKING_INSECURE_TLS: "true"
   MLFLOW_EXPERIMENT_NAME: "banking-demo"
 
-  # Qwen3-8B-FP8 via vLLM (tool-calling enabled)
-  OPENAI_BASE_URL: "https://qwen3-8b-fp8-dynamic-no-maas-0-test.apps.cluster-9tjvr.9tjvr.sandbox2001.opentlc.com/v1"
+  # Qwen3-8B-FP8 via vLLM (auth enabled -- agents use SA token)
+  OPENAI_BASE_URL: "https://qwen3-8b-fp8-a-rh-department.apps.ocp.4dgzz.sandbox3174.opentlc.com/v1"
   OPENAI_API_KEY: "secret"
-  LLM_MODEL: "qwen3-8b-fp8-dynamic-no-maas"
+  LLM_MODEL: "qwen3-8b-fp8"
 
   # MongoDB
   MONGODB_URI: "mongodb://mongodb:27017"
   MONGODB_DATABASE: "banking_crm"
 
   # MCP server -- propagation_only suppresses FastMCP's own OTel spans
-  # so @mlflow.trace is the sole span source (no duplicates)
   MONGODB_MCP_URL: "http://mongodb-mcp:8090"
   FASTMCP_TELEMETRY_MODE: "propagation_only"
-
-  # Suppress A2A SDK auto-tracing (noisy internal spans).
-  # Trace propagation still works via TracingMiddleware + traced_a2a_call().
-  OTEL_INSTRUMENTATION_A2A_SDK_ENABLED: "false"
 
   # A2A agent service URLs
   CUSTOMER_ANALYST_URL: "http://customer-analyst:8001"

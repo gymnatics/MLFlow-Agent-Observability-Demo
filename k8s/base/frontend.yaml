@@ -30,7 +30,7 @@ spec:
         - name: ORCHESTRATOR_URL
           value: "http://orchestrator:8000"
         - name: MLFLOW_UI_URL
-          value: "https://rh-ai.apps.cluster-9tjvr.9tjvr.sandbox2001.opentlc.com/mlflow"
+          value: "https://rh-ai.apps.ocp.4dgzz.sandbox3174.opentlc.com/mlflow"
         image: image-registry.openshift-image-registry.svc:5000/mlflow-tracing-demo/banking-dashboardatest:latest
         imagePullPolicy: Always
         name: frontend
